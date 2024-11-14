@@ -7,22 +7,72 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
 
-# View para o login
+from django.http import JsonResponse, HttpResponse
+import requests
+
+
 def login_view(request):
     if request.method == 'POST':
-        username = request.POST['username']
-        password = request.POST['password']
-        user = authenticate(request, username=username, password=password)
-        if user is not None:
-            login(request, user)
-            return redirect('dashboard')  # Redireciona para a página do dashboard
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+
+        data = {
+            'username': username,
+            'password':  password,
+        }
+        response = requests.post('http://localhost:8000/login', data=data)
+
+        if response.status_code == 200:
+            data = response.json()
+            access_token = data.get('access_token')
+
+            # Definindo o cookie no backend
+            response = redirect('/dashboard')
+            response.set_cookie(
+                'access_token',
+                access_token,
+                max_age=3600,
+                secure=False,   
+                httponly=True,
+                samesite='Strict' 
+            )
+
+            return response
         else:
             messages.error(request, 'Usuário ou senha inválidos.')
-    
+
+    # Verifica se o usuário está logado, se sim, redireciona para o dashboard
+    access_token = request.COOKIES.get('access_token')
+    if access_token:
+        response = requests.get('http://localhost:8000/verify_token/',
+        headers={'Authorization': f'Bearer {access_token}'})
+        if response.status_code == 200:
+            return redirect('/dashboard/')
+        
+        response = redirect('/login/')
+        response.delete_cookie('access_token')
+        return response
+
     return render(request, 'login/login.html')
 
 # View para o registro
 def register_view(request):
+
+    # Verifica se o usuário está logado
+    access_token = request.COOKIES.get('access_token')
+    if access_token:
+        response = requests.get('http://localhost:8000/verify_token/',
+        headers={'Authorization': f'Bearer {access_token}'})
+        if response.status_code != 200:
+            response = redirect('/login/')
+            response.delete_cookie('access_token')
+            return response
+    else:
+        response = redirect('/login/')
+        response.delete_cookie('access_token')
+        return response
+
+
     if request.method == 'POST':
         form = UserCreationForm(request.POST)
         if form.is_valid():
@@ -37,7 +87,7 @@ def register_view(request):
 # View para fazer logout
 def logout_view(request):
     logout(request)
-    return redirect('login')  # Redireciona o usuário para a página de login após o logout
+    return redirect('login')  
 
 # View para o dashboard, requer login
 @login_required
